@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import type { BuyerAgentOutput, BuyerContactCandidate } from './buyer-schema.js';
 
@@ -6,6 +7,7 @@ const CONTACT_SHEET = '담당자';
 const AI_TEAM_SHEET = 'AI Team';
 const MASTER_SHEET = 'Tier1_마스터';
 const CONTACT_SCAN_LAST_ROW = 1200;
+const APPROVAL_LAST_ROW = 1000;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -38,6 +40,7 @@ export type BuyerTargetAccount = {
   attackScore: number;
   marketSummary: string;
   sourceUrls: string[];
+  approvalIds: string[];
 };
 
 export type ExistingContact = {
@@ -58,118 +61,24 @@ type MasterRow = {
   priority: string;
 };
 
+type ContactInsertionPoint = {
+  maxId: number;
+  nextRow: number;
+};
+
+type PromotionResult = {
+  promoted: number;
+  skippedDuplicates: number;
+  legacySkipped: number;
+  promotedIds: string[];
+};
+
 function norm(value: string): string {
   return value
     .toLowerCase()
     .replace(/https?:\/\/(www\.)?/g, '')
     .replace(/[\s._\-–—/()]+/g, '')
     .trim();
-}
-
-export async function readBuyerTargets(
-  spreadsheetId: string,
-  maxAccounts: number
-): Promise<BuyerTargetAccount[]> {
-  const sheets = api();
-  const result = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${APPROVAL_SHEET}'!A2:W1000`
-  });
-
-  const rows = result.data.values ?? [];
-  const grouped = new Map<string, BuyerTargetAccount>();
-
-  for (const row of rows) {
-    const requestingAgent = String(row[2] ?? '');
-    const targetType = String(row[3] ?? '');
-    const company = String(row[4] ?? '').trim();
-    const approvalStatus = String(row[7] ?? '');
-    const makerOem = String(row[15] ?? '');
-    const application = String(row[16] ?? '');
-    const attackScore = Number(row[17] ?? 0);
-    const sources = String(row[20] ?? '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    const summary = String(row[21] ?? '');
-
-    if (requestingAgent !== 'Market Agent') continue;
-    if (targetType !== '공략 후보') continue;
-    if (approvalStatus !== '대기') continue;
-    if (!company || attackScore < 50) continue;
-
-    const key = norm(company);
-    const previous = grouped.get(key);
-    if (!previous) {
-      grouped.set(key, {
-        company,
-        makerOem,
-        applications: application ? [application] : [],
-        attackScore,
-        marketSummary: summary,
-        sourceUrls: sources
-      });
-      continue;
-    }
-
-    if (application && !previous.applications.includes(application)) {
-      previous.applications.push(application);
-    }
-    previous.sourceUrls = [...new Set([...previous.sourceUrls, ...sources])];
-    if (attackScore > previous.attackScore) {
-      previous.attackScore = attackScore;
-      previous.marketSummary = summary;
-      previous.makerOem = makerOem || previous.makerOem;
-    }
-  }
-
-  return [...grouped.values()]
-    .sort((a, b) => b.attackScore - a.attackScore)
-    .slice(0, maxAccounts);
-}
-
-export async function readExistingContacts(spreadsheetId: string): Promise<ExistingContact[]> {
-  const sheets = api();
-  const result = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${CONTACT_SHEET}'!A2:Z1200`
-  });
-
-  return (result.data.values ?? [])
-    .filter(row => String(row[6] ?? '').trim())
-    .map(row => ({
-      contactId: String(row[0] ?? ''),
-      linkedinUrl: String(row[4] ?? ''),
-      tier1: String(row[5] ?? ''),
-      personName: String(row[6] ?? ''),
-      company: String(row[7] ?? ''),
-      title: String(row[8] ?? ''),
-      region: String(row[9] ?? '')
-    }));
-}
-
-async function readMasterRows(spreadsheetId: string): Promise<MasterRow[]> {
-  const sheets = api();
-  const result = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${MASTER_SHEET}'!A2:Q1000`
-  });
-
-  return (result.data.values ?? []).map(row => ({
-    masterId: String(row[0] ?? ''),
-    company: String(row[1] ?? ''),
-    makerOem: String(row[2] ?? ''),
-    relevance: String(row[7] ?? ''),
-    priority: String(row[8] ?? '')
-  }));
-}
-
-function isDuplicate(candidate: BuyerContactCandidate, existing: ExistingContact[]): boolean {
-  const candidateUrl = norm(candidate.linkedinUrl || '');
-  const candidateNameCompany = `${norm(candidate.personName)}|${norm(candidate.company)}`;
-
-  return existing.some(row => {
-    if (candidateUrl && norm(row.linkedinUrl) === candidateUrl) return true;
-    const existingNameCompany = `${norm(row.personName)}|${norm(row.tier1 || row.company)}`;
-    return existingNameCompany === candidateNameCompany;
-  });
 }
 
 function roleLabel(role: BuyerContactCandidate['roleCategory']): string {
@@ -196,10 +105,280 @@ function dateOnly(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 }
 
-type ContactInsertionPoint = {
-  maxId: number;
-  nextRow: number;
-};
+function contactDedupeKey(candidate: BuyerContactCandidate): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${norm(candidate.linkedinUrl)}|${norm(candidate.personName)}|${norm(candidate.company)}`)
+    .digest('hex')
+    .slice(0, 20);
+}
+
+function parseQueueCompanyPerson(value: string): { company: string; personName: string } {
+  const [company = '', ...rest] = value.split('/');
+  return { company: company.trim(), personName: rest.join('/').trim() };
+}
+
+export async function readBuyerTargets(
+  spreadsheetId: string,
+  maxAccounts: number
+): Promise<BuyerTargetAccount[]> {
+  const sheets = api();
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A2:W${APPROVAL_LAST_ROW}`
+  });
+
+  const rows = result.data.values ?? [];
+  const grouped = new Map<string, BuyerTargetAccount>();
+
+  for (const row of rows) {
+    const approvalId = String(row[0] ?? '').trim();
+    const requestingAgent = String(row[2] ?? '');
+    const targetType = String(row[3] ?? '');
+    const company = String(row[4] ?? '').trim();
+    const approvalStatus = String(row[7] ?? '');
+    const executionStatus = String(row[12] ?? '');
+    const makerOem = String(row[15] ?? '');
+    const application = String(row[16] ?? '');
+    const attackScore = Number(row[17] ?? 0);
+    const sources = String(row[20] ?? '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const summary = String(row[21] ?? '');
+
+    if (requestingAgent !== 'Market Agent') continue;
+    if (targetType !== '공략 후보') continue;
+    if (approvalStatus !== '승인') continue;
+    if (executionStatus === '적용완료' || executionStatus === '진행중') continue;
+    if (!company || attackScore < 50) continue;
+
+    const key = norm(company);
+    const previous = grouped.get(key);
+    if (!previous) {
+      grouped.set(key, {
+        company,
+        makerOem,
+        applications: application ? [application] : [],
+        attackScore,
+        marketSummary: summary,
+        sourceUrls: sources,
+        approvalIds: approvalId ? [approvalId] : []
+      });
+      continue;
+    }
+
+    if (application && !previous.applications.includes(application)) previous.applications.push(application);
+    previous.sourceUrls = [...new Set([...previous.sourceUrls, ...sources])];
+    if (approvalId && !previous.approvalIds.includes(approvalId)) previous.approvalIds.push(approvalId);
+    if (attackScore > previous.attackScore) {
+      previous.attackScore = attackScore;
+      previous.marketSummary = summary;
+      previous.makerOem = makerOem || previous.makerOem;
+    }
+  }
+
+  return [...grouped.values()]
+    .sort((a, b) => b.attackScore - a.attackScore)
+    .slice(0, maxAccounts);
+}
+
+async function readActualContacts(spreadsheetId: string): Promise<ExistingContact[]> {
+  const sheets = api();
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${CONTACT_SHEET}'!A2:Z${CONTACT_SCAN_LAST_ROW}`
+  });
+
+  return (result.data.values ?? [])
+    .filter(row => String(row[6] ?? '').trim())
+    .map(row => ({
+      contactId: String(row[0] ?? ''),
+      linkedinUrl: String(row[4] ?? ''),
+      tier1: String(row[5] ?? ''),
+      personName: String(row[6] ?? ''),
+      company: String(row[7] ?? ''),
+      title: String(row[8] ?? ''),
+      region: String(row[9] ?? '')
+    }));
+}
+
+export async function readExistingContacts(spreadsheetId: string): Promise<ExistingContact[]> {
+  const actual = await readActualContacts(spreadsheetId);
+  const sheets = api();
+  const queue = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A2:AE${APPROVAL_LAST_ROW}`
+  });
+
+  const queued: ExistingContact[] = [];
+  for (const row of queue.data.values ?? []) {
+    if (String(row[3] ?? '') !== '신규 담당자 후보') continue;
+    const parsed = parseQueueCompanyPerson(String(row[4] ?? ''));
+    const personName = String(row[27] ?? parsed.personName).trim();
+    const company = String(row[26] ?? parsed.company).trim();
+    if (!personName || !company) continue;
+    queued.push({
+      contactId: String(row[14] ?? ''),
+      linkedinUrl: String(row[6] ?? ''),
+      tier1: company,
+      personName,
+      company: String(row[23] ?? company),
+      title: String(row[24] ?? ''),
+      region: String(row[25] ?? '')
+    });
+  }
+
+  return [...actual, ...queued];
+}
+
+async function readMasterRows(spreadsheetId: string): Promise<MasterRow[]> {
+  const sheets = api();
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${MASTER_SHEET}'!A2:Q1000`
+  });
+
+  return (result.data.values ?? []).map(row => ({
+    masterId: String(row[0] ?? ''),
+    company: String(row[1] ?? ''),
+    makerOem: String(row[2] ?? ''),
+    relevance: String(row[7] ?? ''),
+    priority: String(row[8] ?? '')
+  }));
+}
+
+function findDuplicate(candidate: BuyerContactCandidate, existing: ExistingContact[]): ExistingContact | undefined {
+  const candidateUrl = norm(candidate.linkedinUrl || '');
+  const candidateNameCompany = `${norm(candidate.personName)}|${norm(candidate.company)}`;
+
+  return existing.find(row => {
+    if (candidateUrl && norm(row.linkedinUrl) === candidateUrl) return true;
+    const existingNameCompany = `${norm(row.personName)}|${norm(row.tier1 || row.company)}`;
+    return existingNameCompany === candidateNameCompany;
+  });
+}
+
+function isDuplicate(candidate: BuyerContactCandidate, existing: ExistingContact[]): boolean {
+  return Boolean(findDuplicate(candidate, existing));
+}
+
+export async function queuePendingContactApprovals(
+  spreadsheetId: string,
+  output: BuyerAgentOutput,
+  targets: BuyerTargetAccount[],
+  existing: ExistingContact[]
+): Promise<{ queued: number; duplicatesSkipped: number; candidateIds: string[] }> {
+  const sheets = api();
+  const workingExisting = [...existing];
+  const fresh: BuyerContactCandidate[] = [];
+  let duplicatesSkipped = 0;
+
+  for (const candidate of output.contacts) {
+    if (isDuplicate(candidate, workingExisting)) {
+      duplicatesSkipped += 1;
+      continue;
+    }
+    fresh.push(candidate);
+    workingExisting.push({
+      contactId: '',
+      linkedinUrl: candidate.linkedinUrl,
+      tier1: candidate.company,
+      personName: candidate.personName,
+      company: candidate.currentCompany,
+      title: candidate.currentTitle,
+      region: candidate.region
+    });
+  }
+
+  if (!fresh.length) return { queued: 0, duplicatesSkipped, candidateIds: [] };
+
+  const batchId = Date.now();
+  const candidateIds: string[] = [];
+  const rows = fresh.map((candidate, index) => {
+    const candidateId = `BUY-CAND-${batchId}-${String(index + 1).padStart(2, '0')}`;
+    candidateIds.push(candidateId);
+    const target = targets.find(item => norm(item.company) === norm(candidate.company));
+    const summary = [
+      candidate.whyRelevant,
+      `First question: ${candidate.firstQuestion}`,
+      `Evidence: ${candidate.evidenceSummary}`
+    ].join('\n');
+
+    return [
+      `AI-BUY-${batchId}-${String(index + 1).padStart(2, '0')}`,
+      new Date().toISOString(),
+      'Buyer Agent',
+      '신규 담당자 후보',
+      `${candidate.company} / ${candidate.personName}`,
+      `신규 담당자 검토: ${candidate.currentTitle} · ${candidate.region}`,
+      candidate.linkedinUrl || candidate.publicProfileUrls[0] || '',
+      '대기',
+      '',
+      '',
+      '',
+      'CONTACT_REVIEW',
+      '대기',
+      '',
+      candidateId,
+      target?.makerOem ?? '',
+      candidate.relevantApplication,
+      candidate.recommendedScore,
+      candidate.confidence,
+      roleLabel(candidate.roleCategory),
+      candidate.publicProfileUrls.join('\n'),
+      summary,
+      contactDedupeKey(candidate),
+      candidate.currentCompany,
+      candidate.currentTitle,
+      candidate.region,
+      candidate.company,
+      candidate.personName,
+      candidate.roleCategory,
+      candidate.firstQuestion,
+      verificationLabel(candidate.verificationLevel),
+      candidate.recommendedScore,
+      JSON.stringify(candidate)
+    ];
+  });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A:AE`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: rows }
+  });
+
+  return { queued: rows.length, duplicatesSkipped, candidateIds };
+}
+
+export async function markBuyerTargetsExecution(
+  spreadsheetId: string,
+  targets: BuyerTargetAccount[],
+  status: '진행중' | '적용완료' | '오류'
+): Promise<void> {
+  const approvalIds = new Set(targets.flatMap(target => target.approvalIds));
+  if (!approvalIds.size) return;
+
+  const sheets = api();
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A2:O${APPROVAL_LAST_ROW}`
+  });
+  const data = (result.data.values ?? []).flatMap((row, index) => {
+    const approvalId = String(row[0] ?? '');
+    if (!approvalIds.has(approvalId)) return [];
+    const rowNumber = index + 2;
+    return [{
+      range: `'${APPROVAL_SHEET}'!M${rowNumber}:N${rowNumber}`,
+      values: [[status, new Date().toISOString()]]
+    }];
+  });
+  if (!data.length) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data }
+  });
+}
 
 async function findContactInsertionPoint(
   sheets: ReturnType<typeof api>,
@@ -212,19 +391,15 @@ async function findContactInsertionPoint(
 
   let maxId = 0;
   let maxIdRow = 1;
-
   (result.data.values ?? []).forEach((row, index) => {
-    const id = String(row[0] ?? '');
-    const match = id.match(/^CON-(\d+)$/);
+    const match = String(row[0] ?? '').match(/^CON-(\d+)$/);
     if (!match) return;
-
     const numericId = Number(match[1]);
     if (numericId > maxId) {
       maxId = numericId;
       maxIdRow = index + 2;
     }
   });
-
   return { maxId, nextRow: maxIdRow + 1 };
 }
 
@@ -241,13 +416,9 @@ async function getSheetId(
     spreadsheetId,
     fields: 'sheets.properties(sheetId,title)'
   });
-
   const sheet = result.data.sheets?.find(item => item.properties?.title === title);
   const sheetId = sheet?.properties?.sheetId;
-  if (typeof sheetId !== 'number') {
-    throw new Error(`Sheet not found: ${title}`);
-  }
-
+  if (typeof sheetId !== 'number') throw new Error(`Sheet not found: ${title}`);
   return sheetId;
 }
 
@@ -262,7 +433,6 @@ async function reserveContactRows(
     spreadsheetId,
     range: `'${CONTACT_SHEET}'!A${startRow}:Z${endRow}`
   });
-
   if (!hasAnyCellValue((target.data.values ?? []) as unknown[][])) return;
 
   const sheetId = await getSheetId(sheets, spreadsheetId, CONTACT_SHEET);
@@ -284,121 +454,185 @@ async function reserveContactRows(
   });
 }
 
-export async function appendNewContacts(
-  spreadsheetId: string,
-  output: BuyerAgentOutput,
-  targets: BuyerTargetAccount[],
-  existing: ExistingContact[]
-): Promise<{ inserted: number; duplicatesSkipped: number; insertedIds: string[] }> {
+function contactSheetRow(
+  candidate: BuyerContactCandidate,
+  contactId: string,
+  master: MasterRow | undefined,
+  makerOemFallback: string
+): unknown[] {
+  const memo = [
+    '[AI 승인 적용]',
+    candidate.evidenceSummary,
+    candidate.publicProfileUrls.join(' | ')
+  ].filter(Boolean).join(' ');
+
+  return [
+    contactId,
+    '',
+    candidate.recommendedScore,
+    master?.priority ?? '',
+    candidate.linkedinUrl,
+    candidate.company,
+    candidate.personName,
+    candidate.currentCompany,
+    candidate.currentTitle,
+    candidate.region,
+    roleLabel(candidate.roleCategory),
+    priorityFromScore(candidate.recommendedScore),
+    candidate.whyRelevant,
+    verificationLabel(candidate.verificationLevel),
+    dateOnly(),
+    candidate.firstQuestion,
+    '미착수',
+    '',
+    '현재 재직·직무 및 Commodity 소유권 재확인 후 접촉 검토',
+    '',
+    'Tracy',
+    memo,
+    master?.masterId ?? '',
+    master?.makerOem ?? makerOemFallback,
+    master?.relevance ?? '신호 기반',
+    master ? '마스터 연계' : '마스터 외'
+  ];
+}
+
+export async function stampApprovalMetadata(spreadsheetId: string): Promise<number> {
   const sheets = api();
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A2:J${APPROVAL_LAST_ROW}`
+  });
+  const now = new Date().toISOString();
+  const data: Array<{ range: string; values: string[][] }> = [];
+
+  (result.data.values ?? []).forEach((row, index) => {
+    if (String(row[7] ?? '') !== '승인') return;
+    const approver = String(row[8] ?? '').trim();
+    const approvedAt = String(row[9] ?? '').trim();
+    if (approver && approvedAt) return;
+    const rowNumber = index + 2;
+    data.push({
+      range: `'${APPROVAL_SHEET}'!I${rowNumber}:J${rowNumber}`,
+      values: [[approver || 'Tracy', approvedAt || now]]
+    });
+  });
+
+  if (!data.length) return 0;
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data }
+  });
+  return data.length;
+}
+
+export async function promoteApprovedContacts(spreadsheetId: string): Promise<PromotionResult> {
+  const sheets = api();
+  const queueResult = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${APPROVAL_SHEET}'!A2:AE${APPROVAL_LAST_ROW}`
+  });
   const masterRows = await readMasterRows(spreadsheetId);
+  const actualContacts = await readActualContacts(spreadsheetId);
+  const promotionCandidates: Array<{ rowNumber: number; candidate: BuyerContactCandidate; makerOem: string }> = [];
+  const statusUpdates: Array<{ rowNumber: number; status: '스킵'; linkId: string }> = [];
+  let legacySkipped = 0;
+  let skippedDuplicates = 0;
 
-  const fresh: BuyerContactCandidate[] = [];
-  let duplicatesSkipped = 0;
-  const workingExisting = [...existing];
+  for (const [index, row] of (queueResult.data.values ?? []).entries()) {
+    const rowNumber = index + 2;
+    if (String(row[3] ?? '') !== '신규 담당자 후보') continue;
+    if (String(row[7] ?? '') !== '승인') continue;
+    const executionStatus = String(row[12] ?? '');
+    if (executionStatus === '적용완료' || executionStatus === '스킵') continue;
 
-  for (const candidate of output.contacts) {
-    if (isDuplicate(candidate, workingExisting)) {
-      duplicatesSkipped += 1;
+    const payload = String(row[32] ?? '').trim();
+    if (!payload) {
+      const legacyLinkId = String(row[14] ?? '');
+      if (legacyLinkId.startsWith('CON-') && actualContacts.some(contact => contact.contactId === legacyLinkId)) {
+        legacySkipped += 1;
+        statusUpdates.push({ rowNumber, status: '스킵', linkId: legacyLinkId });
+      }
       continue;
     }
 
-    fresh.push(candidate);
-    workingExisting.push({
-      contactId: '',
-      linkedinUrl: candidate.linkedinUrl,
-      tier1: candidate.company,
-      personName: candidate.personName,
-      company: candidate.currentCompany,
-      title: candidate.currentTitle,
-      region: candidate.region
+    let candidate: BuyerContactCandidate;
+    try {
+      candidate = JSON.parse(payload) as BuyerContactCandidate;
+    } catch {
+      statusUpdates.push({ rowNumber, status: '스킵', linkId: 'INVALID_PAYLOAD' });
+      continue;
+    }
+
+    const duplicate = findDuplicate(candidate, actualContacts);
+    if (duplicate) {
+      skippedDuplicates += 1;
+      statusUpdates.push({ rowNumber, status: '스킵', linkId: duplicate.contactId || 'DUPLICATE' });
+      continue;
+    }
+
+    promotionCandidates.push({
+      rowNumber,
+      candidate,
+      makerOem: String(row[15] ?? '')
     });
   }
 
-  if (!fresh.length) return { inserted: 0, duplicatesSkipped, insertedIds: [] };
+  const promotedIds: string[] = [];
+  if (promotionCandidates.length) {
+    const insertionPoint = await findContactInsertionPoint(sheets, spreadsheetId);
+    let maxId = insertionPoint.maxId;
+    const rows = promotionCandidates.map(item => {
+      const contactId = `CON-${String(++maxId).padStart(3, '0')}`;
+      promotedIds.push(contactId);
+      const master = masterRows.find(row => norm(row.company) === norm(item.candidate.company));
+      actualContacts.push({
+        contactId,
+        linkedinUrl: item.candidate.linkedinUrl,
+        tier1: item.candidate.company,
+        personName: item.candidate.personName,
+        company: item.candidate.currentCompany,
+        title: item.candidate.currentTitle,
+        region: item.candidate.region
+      });
+      return contactSheetRow(item.candidate, contactId, master, item.makerOem);
+    });
 
-  const insertionPoint = await findContactInsertionPoint(sheets, spreadsheetId);
-  let maxId = insertionPoint.maxId;
+    await reserveContactRows(sheets, spreadsheetId, insertionPoint.nextRow, rows.length);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${CONTACT_SHEET}'!A${insertionPoint.nextRow}:Z${insertionPoint.nextRow + rows.length - 1}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows }
+    });
+  }
 
-  const insertedIds: string[] = [];
-  const rows = fresh.map(candidate => {
-    const contactId = `CON-${String(++maxId).padStart(3, '0')}`;
-    insertedIds.push(contactId);
-
-    const master = masterRows.find(row => norm(row.company) === norm(candidate.company));
-    const target = targets.find(row => norm(row.company) === norm(candidate.company));
-    const memo = [
-      '[AI 신규 발굴]',
-      candidate.evidenceSummary,
-      candidate.publicProfileUrls.join(' | ')
-    ].filter(Boolean).join(' ');
-
-    return [
-      contactId,
-      '',
-      candidate.recommendedScore,
-      master?.priority ?? '',
-      candidate.linkedinUrl,
-      candidate.company,
-      candidate.personName,
-      candidate.currentCompany,
-      candidate.currentTitle,
-      candidate.region,
-      roleLabel(candidate.roleCategory),
-      priorityFromScore(candidate.recommendedScore),
-      candidate.whyRelevant,
-      verificationLabel(candidate.verificationLevel),
-      dateOnly(),
-      candidate.firstQuestion,
-      'AI 신규·검토대기',
-      '',
-      '현재 재직·직무 및 Commodity 소유권 재확인 후 접촉 검토',
-      '',
-      'Tracy',
-      memo,
-      master?.masterId ?? '',
-      master?.makerOem ?? target?.makerOem ?? '',
-      master?.relevance ?? '신호 기반',
-      master ? '마스터 연계' : '마스터 외'
-    ];
+  const now = new Date().toISOString();
+  const data: Array<{ range: string; values: string[][] }> = [];
+  promotionCandidates.forEach((item, index) => {
+    data.push({
+      range: `'${APPROVAL_SHEET}'!M${item.rowNumber}:O${item.rowNumber}`,
+      values: [['적용완료', now, promotedIds[index]]]
+    });
   });
-
-  await reserveContactRows(sheets, spreadsheetId, insertionPoint.nextRow, rows.length);
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `'${CONTACT_SHEET}'!A${insertionPoint.nextRow}:Z${insertionPoint.nextRow + rows.length - 1}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: rows }
+  statusUpdates.forEach(item => {
+    data.push({
+      range: `'${APPROVAL_SHEET}'!M${item.rowNumber}:O${item.rowNumber}`,
+      values: [[item.status, now, item.linkId]]
+    });
   });
+  if (data.length) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data }
+    });
+  }
 
-  const approvalRows = fresh.map((candidate, index) => [
-    `AI-BUY-${Date.now()}-${String(index + 1).padStart(2, '0')}`,
-    new Date().toISOString(),
-    'Buyer Agent',
-    '신규 담당자 후보',
-    `${candidate.company} / ${candidate.personName}`,
-    `신규 담당자 검토: ${candidate.currentTitle} · ${candidate.region}`,
-    candidate.linkedinUrl || candidate.publicProfileUrls[0] || '',
-    '대기',
-    '',
-    '',
-    '',
-    'CONTACT_REVIEW',
-    '대기',
-    '',
-    insertedIds[index]
-  ]);
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `'${APPROVAL_SHEET}'!A:O`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: approvalRows }
-  });
-
-  return { inserted: rows.length, duplicatesSkipped, insertedIds };
+  return {
+    promoted: promotedIds.length,
+    skippedDuplicates,
+    legacySkipped,
+    promotedIds
+  };
 }
 
 export async function updateBuyerAgentStatus(
@@ -413,7 +647,6 @@ export async function updateBuyerAgentStatus(
     spreadsheetId,
     range: `'${AI_TEAM_SHEET}'!A2:J20`
   });
-
   const rows = result.data.values ?? [];
   let relativeIndex = rows.findIndex(row => row[0] === 'Buyer Agent');
   if (relativeIndex < 0) relativeIndex = rows.length;
@@ -431,10 +664,10 @@ export async function updateBuyerAgentStatus(
         recentOutput,
         approvalNeeded,
         0,
-        'Commodity Buyer·Supplier Development·Project Purchasing·Engineering 담당자 신규 발굴',
-        'Approval Queue · 담당자 기존 목록 · 공개 웹',
-        '담당자 신규 행 · Approval Queue CONTACT_REVIEW',
-        notes || '기존 담당자 중복 금지 · 공개근거 확인 · 외부 접촉 금지'
+        '승인된 공략기회만 신규 구매담당자 조사',
+        'Approval Queue 승인=승인 · 담당자 기존/대기 후보 exclusion · 공개 웹',
+        'Approval Queue 신규 담당자 후보',
+        notes || '기회 승인 전 조사 금지 · 담당자 승인 전 담당자 시트 반영 금지 · 외부 접촉 금지'
       ]]
     }
   });
