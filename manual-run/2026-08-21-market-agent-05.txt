@@ -1,0 +1,2 @@
+Manual retry requested by user after OpenAI API quota/billing update.
+Expected path: secret preflight -> node setup -> install -> typecheck -> Market Agent -> Google Sheet Approval Queue.
