@@ -102,7 +102,17 @@ function approvalRow(c: MarketCandidate, index: number): unknown[] {
     c.makeBuyNote,
     c.sourceUrls.join('\n'),
     summary,
-    key
+    key,
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    JSON.stringify(c)
   ];
 }
 
@@ -120,7 +130,7 @@ export async function appendPendingApprovals(
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `'${APPROVAL_SHEET}'!A:W`,
+    range: `'${APPROVAL_SHEET}'!A:AG`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: rows }
