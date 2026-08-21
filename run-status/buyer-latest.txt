@@ -1,9 +1,10 @@
-Linked Seoul Buyer Agent verification
-run_at_utc=2026-08-21T02:18:53Z
-trigger_sha=f3f5401b219e43446cdf4063b84d68bb82c43f4a
+Linked Seoul Approval Gate + Buyer verification
+run_at_utc=2026-08-21T03:05:44Z
+trigger_sha=8bdfb4a3807ae0053897dfcf73a944f4fcf17a87
 secret_preflight_ready=true
 missing_secrets=none
 setup_node_outcome=success
 install_outcome=success
 typecheck_outcome=success
+approval_gate_outcome=success
 buyer_agent_outcome=success
