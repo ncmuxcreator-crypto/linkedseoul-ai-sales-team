@@ -1,6 +1,6 @@
 Linked Seoul Market Agent verification
-run_at_utc=2026-08-21T01:30:35Z
-trigger_sha=e5cf5cda5adf1e52f53fa99b618296309c39c713
+run_at_utc=2026-08-21T01:32:10Z
+trigger_sha=b186804e9bf145f6374b368aab032e7f96a83a43
 secret_preflight_ready=true
 missing_secrets=none
 setup_node_outcome=success
