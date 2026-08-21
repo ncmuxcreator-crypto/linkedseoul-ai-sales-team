@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "market": "tsx src/run-market-agent.ts",
+    "buyer": "tsx src/run-buyer-agent.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
