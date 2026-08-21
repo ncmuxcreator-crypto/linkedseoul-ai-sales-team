@@ -1,0 +1,3 @@
+Linked Seoul Market Agent manual verification run requested on 2026-08-21 KST.
+Purpose: validate secret preflight, typecheck, OpenAI Market Agent execution, and Google Sheet Approval Queue write boundary.
+No external outreach.
