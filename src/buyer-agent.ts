@@ -24,13 +24,15 @@ RESEARCH RULES
 - Do not access or scrape authenticated LinkedIn sessions.
 - Do not invent a name, title, company, region, commodity scope, email address, phone number, LinkedIn URL, or reporting line.
 - Never guess personal email addresses. Do not output private contact details.
+- Every returned item must represent a NAMED PERSON and must include a non-empty public LinkedIn PERSON PROFILE URL. Job-posting URLs, search-result URLs, company pages, and unnamed role descriptions are not valid linkedinUrl values.
+- Never return placeholders such as 'name not public', 'unknown', 'unnamed buyer', or a job title in the personName field. If no named person can be verified, return zero contacts for that gap.
 - A candidate must have public evidence tying the named person to the stated current company and role/title.
 - Favor current role evidence from 2025-2026. If the current role is uncertain, omit the candidate.
 - Existing contacts supplied in the prompt are a HARD EXCLUSION LIST. Do not return anyone with the same LinkedIn URL. Also do not return the same person at the same company under a different URL or wording.
 - Avoid generic executives/CPOs when a closer commodity or project buyer is available.
 - Match geography to the live commercial signal where possible: e.g. Querétaro/Mexico, Martos/Spain, North America, U.S. launch, etc.
 - Do not treat a hiring manager, recruiter, salesperson, or unrelated engineer as a buyer unless there is clear routing value.
-- For each candidate, include the strongest public evidence URLs you used. linkedinUrl may be empty only if another official/public source names the person and current purchasing role.
+- For each candidate, include the strongest public evidence URLs you used in publicProfileUrls.
 - verificationLevel='public-confirmed' only when current company + role are directly supported. Use 'strong-candidate' only when the evidence is still credible but commodity ownership is not fully public.
 - confidence must be high or medium. Do not return low-confidence people.
 - No external outreach. This is internal contact-list enrichment only.
@@ -87,7 +89,7 @@ ${JSON.stringify(targetPayload, null, 2)}
 EXISTING CONTACTS — HARD EXCLUSION LIST
 ${JSON.stringify(exclusionPayload, null, 2)}
 
-Prioritize accounts with the strongest attackScore and fresh market signal. Search specifically for new people not already listed. Return no more than ${maxNewContacts} contacts total.
+Prioritize accounts with the strongest attackScore and fresh market signal. Search specifically for new named people not already listed. Return no more than ${maxNewContacts} contacts total. Do not return unnamed job-role gaps.
 `.trim();
 
   const result = await run(agent, prompt);
