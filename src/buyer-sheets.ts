@@ -333,8 +333,6 @@ export async function queuePendingContactApprovals(
       candidate.personName,
       candidate.roleCategory,
       candidate.firstQuestion,
-      verificationLabel(candidate.verificationLevel),
-      candidate.recommendedScore,
       JSON.stringify(candidate)
     ];
   });
@@ -545,7 +543,7 @@ export async function promoteApprovedContacts(spreadsheetId: string): Promise<Pr
     const executionStatus = String(row[12] ?? '');
     if (executionStatus === '적용완료' || executionStatus === '스킵') continue;
 
-    const payload = String(row[32] ?? '').trim();
+    const payload = String(row[30] ?? '').trim();
     if (!payload) {
       const legacyLinkId = String(row[14] ?? '');
       if (legacyLinkId.startsWith('CON-') && actualContacts.some(contact => contact.contactId === legacyLinkId)) {
