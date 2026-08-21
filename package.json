@@ -6,6 +6,7 @@
   "scripts": {
     "market": "tsx src/run-market-agent.ts",
     "buyer": "tsx src/run-buyer-agent.ts",
+    "gate": "tsx src/run-approval-gate.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
