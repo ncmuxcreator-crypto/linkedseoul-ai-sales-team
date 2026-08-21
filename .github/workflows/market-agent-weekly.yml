@@ -1,4 +1,4 @@
-name: Linked Seoul Market + Buyer Agents Weekly
+name: Linked Seoul Sales Agents Weekly
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   sales-agents:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -68,7 +68,15 @@ jobs:
           MAX_CANDIDATES: '10'
         run: npm run market
 
-      - name: Run Buyer Agent
+      - name: Apply approved contact promotions
+        if: steps.preflight.outputs.ready == 'true'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+        run: npm run gate
+
+      - name: Run Buyer Agent for approved opportunities only
         if: steps.preflight.outputs.ready == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
