@@ -5,6 +5,7 @@ const APPROVAL_SHEET = 'Approval Queue';
 const CONTACT_SHEET = '담당자';
 const AI_TEAM_SHEET = 'AI Team';
 const MASTER_SHEET = 'Tier1_마스터';
+const CONTACT_SCAN_LAST_ROW = 1200;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -195,6 +196,94 @@ function dateOnly(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 }
 
+type ContactInsertionPoint = {
+  maxId: number;
+  nextRow: number;
+};
+
+async function findContactInsertionPoint(
+  sheets: ReturnType<typeof api>,
+  spreadsheetId: string
+): Promise<ContactInsertionPoint> {
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${CONTACT_SHEET}'!A2:A${CONTACT_SCAN_LAST_ROW}`
+  });
+
+  let maxId = 0;
+  let maxIdRow = 1;
+
+  (result.data.values ?? []).forEach((row, index) => {
+    const id = String(row[0] ?? '');
+    const match = id.match(/^CON-(\d+)$/);
+    if (!match) return;
+
+    const numericId = Number(match[1]);
+    if (numericId > maxId) {
+      maxId = numericId;
+      maxIdRow = index + 2;
+    }
+  });
+
+  return { maxId, nextRow: maxIdRow + 1 };
+}
+
+function hasAnyCellValue(rows: unknown[][]): boolean {
+  return rows.some(row => row.some(value => String(value ?? '').trim() !== ''));
+}
+
+async function getSheetId(
+  sheets: ReturnType<typeof api>,
+  spreadsheetId: string,
+  title: string
+): Promise<number> {
+  const result = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties(sheetId,title)'
+  });
+
+  const sheet = result.data.sheets?.find(item => item.properties?.title === title);
+  const sheetId = sheet?.properties?.sheetId;
+  if (typeof sheetId !== 'number') {
+    throw new Error(`Sheet not found: ${title}`);
+  }
+
+  return sheetId;
+}
+
+async function reserveContactRows(
+  sheets: ReturnType<typeof api>,
+  spreadsheetId: string,
+  startRow: number,
+  rowCount: number
+): Promise<void> {
+  const endRow = startRow + rowCount - 1;
+  const target = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${CONTACT_SHEET}'!A${startRow}:Z${endRow}`
+  });
+
+  if (!hasAnyCellValue((target.data.values ?? []) as unknown[][])) return;
+
+  const sheetId = await getSheetId(sheets, spreadsheetId, CONTACT_SHEET);
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: startRow - 1,
+            endIndex: startRow - 1 + rowCount
+          },
+          inheritFromBefore: true
+        }
+      }]
+    }
+  });
+}
+
 export async function appendNewContacts(
   spreadsheetId: string,
   output: BuyerAgentOutput,
@@ -228,15 +317,8 @@ export async function appendNewContacts(
 
   if (!fresh.length) return { inserted: 0, duplicatesSkipped, insertedIds: [] };
 
-  const idResult = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${CONTACT_SHEET}'!A2:A1200`
-  });
-  const existingIds = (idResult.data.values ?? []).flat().map(String);
-  let maxId = existingIds.reduce((max, id) => {
-    const match = id.match(/^CON-(\d+)$/);
-    return match ? Math.max(max, Number(match[1])) : max;
-  }, 0);
+  const insertionPoint = await findContactInsertionPoint(sheets, spreadsheetId);
+  let maxId = insertionPoint.maxId;
 
   const insertedIds: string[] = [];
   const rows = fresh.map(candidate => {
@@ -281,11 +363,12 @@ export async function appendNewContacts(
     ];
   });
 
-  await sheets.spreadsheets.values.append({
+  await reserveContactRows(sheets, spreadsheetId, insertionPoint.nextRow, rows.length);
+
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${CONTACT_SHEET}'!A:Z`,
+    range: `'${CONTACT_SHEET}'!A${insertionPoint.nextRow}:Z${insertionPoint.nextRow + rows.length - 1}`,
     valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
     requestBody: { values: rows }
   });
 
