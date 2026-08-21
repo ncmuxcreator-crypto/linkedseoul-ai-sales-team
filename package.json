@@ -1,0 +1,20 @@
+{
+  "name": "linkedseoul-ai-sales-team",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "market": "tsx src/run-market-agent.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openai/agents": "0.17.0",
+    "googleapis": "latest",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
