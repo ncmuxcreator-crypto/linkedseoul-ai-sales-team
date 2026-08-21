@@ -1,0 +1,68 @@
+name: Linked Seoul Market Agent Once
+
+on:
+  push:
+    paths:
+      - 'manual-run/**'
+
+permissions:
+  contents: read
+
+jobs:
+  market-agent-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Secret preflight
+        id: preflight
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+        shell: bash
+        run: |
+          missing=0
+          for name in OPENAI_API_KEY GOOGLE_SERVICE_ACCOUNT_EMAIL GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY GOOGLE_SHEETS_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Agent run skipped safely because required secrets are not configured."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.preflight.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.preflight.outputs.ready == 'true'
+        run: npm install
+
+      - name: Typecheck
+        if: steps.preflight.outputs.ready == 'true'
+        run: npm run typecheck
+
+      - name: Run Market Agent
+        if: steps.preflight.outputs.ready == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          TARGET_REGIONS: Germany,France,Czechia,Poland,United States,Mexico,Japan,Korea,India
+          TARGET_APPLICATIONS: HVAC,Thermal Management,Door,Closure,Seat,Mirror,Power Tailgate,Charging Access
+          MAX_CANDIDATES: '10'
+        run: npm run market
