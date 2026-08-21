@@ -6,7 +6,7 @@ on:
       - 'manual-run/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   market-agent-once:
@@ -25,21 +25,24 @@ jobs:
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
         shell: bash
         run: |
-          missing=0
+          missing=()
           for name in OPENAI_API_KEY GOOGLE_SERVICE_ACCOUNT_EMAIL GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY GOOGLE_SHEETS_ID; do
             if [ -z "${!name}" ]; then
-              echo "Missing required secret: $name"
-              missing=1
+              missing+=("$name")
             fi
           done
-          if [ "$missing" -eq 1 ]; then
+          if [ "${#missing[@]}" -gt 0 ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$(IFS=,; echo "${missing[*]}")" >> "$GITHUB_OUTPUT"
+            printf 'Missing required secret: %s\n' "${missing[@]}"
             echo "Agent run skipped safely because required secrets are not configured."
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Node
+        id: setup_node
         if: steps.preflight.outputs.ready == 'true'
         uses: actions/setup-node@v4
         with:
@@ -47,14 +50,17 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        id: install
         if: steps.preflight.outputs.ready == 'true'
         run: npm install
 
       - name: Typecheck
+        id: typecheck
         if: steps.preflight.outputs.ready == 'true'
         run: npm run typecheck
 
       - name: Run Market Agent
+        id: market
         if: steps.preflight.outputs.ready == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -66,3 +72,39 @@ jobs:
           TARGET_APPLICATIONS: HVAC,Thermal Management,Door,Closure,Seat,Mirror,Power Tailgate,Charging Access
           MAX_CANDIDATES: '10'
         run: npm run market
+
+      - name: Write verification status
+        if: always()
+        shell: bash
+        env:
+          READY: ${{ steps.preflight.outputs.ready }}
+          MISSING: ${{ steps.preflight.outputs.missing }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          MARKET_OUTCOME: ${{ steps.market.outcome }}
+        run: |
+          mkdir -p run-status
+          {
+            echo "Linked Seoul Market Agent verification"
+            echo "run_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "trigger_sha=$GITHUB_SHA"
+            echo "secret_preflight_ready=${READY:-unknown}"
+            echo "missing_secrets=${MISSING:-none}"
+            echo "install_outcome=${INSTALL_OUTCOME:-not_run}"
+            echo "typecheck_outcome=${TYPECHECK_OUTCOME:-not_run}"
+            echo "market_agent_outcome=${MARKET_OUTCOME:-not_run}"
+          } > run-status/latest.txt
+
+      - name: Commit verification status
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add run-status/latest.txt
+          if git diff --cached --quiet; then
+            echo "No status change to commit."
+          else
+            git commit -m "Record Market Agent verification status"
+            git push
+          fi
