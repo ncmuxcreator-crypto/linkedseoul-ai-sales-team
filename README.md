@@ -4,9 +4,9 @@ AI-assisted automotive sales intelligence for Linked Seoul / LINKED MOTOR.
 
 ## V1 flow
 
-`Market Agent -> Approval Queue -> Human approval -> Buyer Agent -> Approval Queue -> Human approval -> 담당자`
+`Market Agent -> Approval Queue -> Human approval -> 후보/액션 반영 -> Buyer Agent -> Approval Queue -> Human approval -> 담당자 -> Radar/Brief refresh`
 
-The system does **not** send email, contact prospects, approve suppliers, or perform LinkedIn outreach automatically.
+The system does **not** send email, contact prospects, approve suppliers, or perform LinkedIn outreach automatically. Human-approved items are promoted into internal candidate, contact, and action records by the weekly sheet-maintenance script.
 
 ## Approval Queue — user action
 
@@ -50,7 +50,9 @@ npm install
 npm run typecheck
 npm run market
 npm run gate
+npm run sheet:sync
 npm run buyer
+npm run sheet:refresh
 ```
 
 ## Scoring
@@ -78,6 +80,8 @@ The agents do not:
 
 The GitHub Actions workflow runs Friday 07:00 KST (Thursday 22:00 UTC):
 
-`Market Agent -> approved contact promotion gate -> Buyer Agent for approved opportunities only`
+`Market Agent -> approved contact promotion gate -> approved opportunity/action sync -> Buyer Agent for approved opportunities only -> operational view refresh`
 
 If there is no approved opportunity, Buyer Agent exits safely without an OpenAI research call.
+
+The weekly sheet-maintenance steps update only cell values in operational ranges and copy existing row presentation to newly inserted rows. Existing formulas, fills, conditional formatting, and dropdown rules are not replaced. Maker/OEM links remain explicitly labeled as estimates until an official source confirms them.

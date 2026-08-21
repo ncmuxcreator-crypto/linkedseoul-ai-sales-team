@@ -7,6 +7,8 @@
     "market": "tsx src/run-market-agent.ts",
     "buyer": "tsx src/run-buyer-agent.ts",
     "gate": "tsx src/run-approval-gate.ts",
+    "sheet:sync": "tsx src/run-sheet-sync.ts",
+    "sheet:refresh": "tsx src/run-sheet-refresh.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
