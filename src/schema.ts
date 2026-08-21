@@ -17,7 +17,10 @@ export const MarketCandidateSchema = z.object({
     'other'
   ]),
   signalSummary: z.string().min(1),
-  sourceUrls: z.array(z.string().url()).min(1),
+  // Keep source URLs as strings in the structured-output schema because the
+  // Responses API JSON-schema subset does not accept Zod's `format: uri`.
+  // URL shape is treated as evidence text and can be validated downstream.
+  sourceUrls: z.array(z.string().min(1)).min(1),
   applicationFit: z.number().int().min(0).max(30),
   externalSourcingProbability: z.number().int().min(0).max(25),
   timing: z.number().int().min(0).max(20),
