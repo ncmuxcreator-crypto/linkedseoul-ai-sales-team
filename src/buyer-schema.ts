@@ -6,7 +6,7 @@ export const BuyerContactCandidateSchema = z.object({
   currentCompany: z.string().min(1),
   currentTitle: z.string().min(1),
   region: z.string().min(1),
-  linkedinUrl: z.string(),
+  linkedinUrl: z.string().min(1),
   publicProfileUrls: z.array(z.string()).min(1),
   roleCategory: z.enum([
     'direct-buyer',
