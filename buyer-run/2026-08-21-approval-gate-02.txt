@@ -1,0 +1,3 @@
+Validate strict Approval Queue gate after human-approval flow refactor.
+Expected: typecheck PASS, approval gate PASS, Buyer Agent safely skips because current opportunities are still H=대기.
+No approval state changes. No external outreach.
