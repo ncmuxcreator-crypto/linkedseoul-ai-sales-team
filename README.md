@@ -2,32 +2,31 @@
 
 AI-assisted automotive sales intelligence for Linked Seoul / LINKED MOTOR.
 
-## V1 scope
+## V1 flow
 
-V1 deliberately starts with one production agent: **Market Agent**.
+`Market Agent -> Approval Queue -> Human approval -> Buyer Agent -> Approval Queue -> Human approval -> 담당자`
 
-Flow:
+The system does **not** send email, contact prospects, approve suppliers, or perform LinkedIn outreach automatically.
 
-`Market Agent -> Web research -> Structured candidate -> Approval Queue -> Human approval`
+## Approval Queue — user action
 
-The agent does **not** send email, contact prospects, approve suppliers, or write directly into final sales-action records.
+1. Open `Approval Queue` and review the evidence/link, score and AI summary.
+2. In column **H (`승인 상태`)**, choose only one of: `대기`, `승인`, `반려`, `보류`.
+3. Market opportunities move to Buyer Agent research **only when H = `승인`**.
+4. New buyer/contact candidates move into `담당자` **only when H = `승인`**.
+5. `승인` means permission for the **next internal AI step only**. It never authorizes external email or LinkedIn sending.
 
-It writes proposed items into the existing Google Sheet tabs:
+Columns M-O track internal execution: `대기`, `진행중`, `적용완료`, `스킵`, `오류`.
+If an approved row has no approver/timestamp, the gate records `Tracy` and the current timestamp without changing the approval decision itself.
+
+Legacy contacts created before the strict gate remain in `담당자`; the strict gate applies to new Buyer Agent results from this version forward.
+
+## Sheets
 
 - `AI Team` — agent status / last run
-- `Agent Inbox` — internal work handoff
 - `Approval Queue` — human approval boundary
-
-Existing operational tabs remain authoritative:
-
-- `주간_레이더`
-- `주간_브리프`
-- `후보_검토`
-- `기회_피드`
-- `계정_관계`
-- `Tier1_마스터`
-- `담당자`
-- `액션`
+- `담당자` — approved contacts only for new strict-gate runs
+- `주간_레이더`, `후보_검토`, `기회_피드`, `계정_관계`, `Tier1_마스터`, `액션` — operational data
 
 ## Required GitHub Actions secrets
 
@@ -38,15 +37,11 @@ Add these under **Repository Settings -> Secrets and variables -> Actions**:
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
 - `GOOGLE_SHEETS_ID`
 
-For this project, `GOOGLE_SHEETS_ID` should be:
+`GOOGLE_SHEETS_ID`:
 
 `1WHcPdMLArf0wGbII7BzAa7E5Dx1JVu9h_RAj66qGZPI`
 
-Do not commit any API key or private key into this repository.
-
-## Google permissions
-
-Share the Weekly Radar spreadsheet with the service account email as **Editor**. The service account only needs spreadsheet access for V1.
+Do not commit API keys or private keys into this repository.
 
 ## Run locally
 
@@ -54,13 +49,13 @@ Share the Weekly Radar spreadsheet with the service account email as **Editor**.
 npm install
 npm run typecheck
 npm run market
+npm run gate
+npm run buyer
 ```
-
-Environment variables are documented in `.env.example`.
 
 ## Scoring
 
-The Market Agent does not equate application fit with sales opportunity. It scores:
+The Market Agent scores opportunity quality rather than application fit alone:
 
 - Application fit: 0-30
 - External sourcing probability: 0-25
@@ -69,20 +64,20 @@ The Market Agent does not equate application fit with sales opportunity. It scor
 - Evidence quality: 0-10
 - Vertical integration penalty: 0-25 deduction
 
-This is specifically intended to prevent vertically integrated groups from ranking too highly simply because they use relevant motors or actuators.
+## Safety boundary
 
-## Current safety boundary
-
-All new AI-originated commercial proposals enter `Approval Queue` with status `대기`.
-
-V1 does **not**:
+The agents do not:
 
 - send Gmail or LinkedIn messages
 - scrape authenticated LinkedIn sessions
-- change approval status
-- create final outreach actions automatically
+- change column H approval status
+- promote an unapproved new contact into `담당자`
 - fabricate RFQs, buyer names, OEM programs, or sourcing events
 
 ## Weekly schedule
 
-The included GitHub Actions workflow is scheduled for Friday 07:00 KST (Thursday 22:00 UTC). It performs a secret preflight first; if required secrets are missing, it exits safely without running the agent.
+The GitHub Actions workflow runs Friday 07:00 KST (Thursday 22:00 UTC):
+
+`Market Agent -> approved contact promotion gate -> Buyer Agent for approved opportunities only`
+
+If there is no approved opportunity, Buyer Agent exits safely without an OpenAI research call.
