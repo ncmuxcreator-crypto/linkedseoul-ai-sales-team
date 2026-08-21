@@ -1,0 +1,3 @@
+Linked Seoul Buyer Agent manual verification trigger
+requested_at_kst=2026-08-21 11:14
+purpose=new public buyer discovery with hard duplicate exclusion
