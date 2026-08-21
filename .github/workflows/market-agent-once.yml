@@ -47,7 +47,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
       - name: Install dependencies
         id: install
@@ -79,6 +78,7 @@ jobs:
         env:
           READY: ${{ steps.preflight.outputs.ready }}
           MISSING: ${{ steps.preflight.outputs.missing }}
+          SETUP_OUTCOME: ${{ steps.setup_node.outcome }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
           MARKET_OUTCOME: ${{ steps.market.outcome }}
@@ -90,6 +90,7 @@ jobs:
             echo "trigger_sha=$GITHUB_SHA"
             echo "secret_preflight_ready=${READY:-unknown}"
             echo "missing_secrets=${MISSING:-none}"
+            echo "setup_node_outcome=${SETUP_OUTCOME:-not_run}"
             echo "install_outcome=${INSTALL_OUTCOME:-not_run}"
             echo "typecheck_outcome=${TYPECHECK_OUTCOME:-not_run}"
             echo "market_agent_outcome=${MARKET_OUTCOME:-not_run}"
