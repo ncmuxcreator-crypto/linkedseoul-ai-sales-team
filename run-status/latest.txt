@@ -1,8 +1,9 @@
 Linked Seoul Market Agent verification
-run_at_utc=2026-08-21T01:29:08Z
-trigger_sha=2bdb0b02935d5c7fb706de92ddfb4699bcbc22f4
+run_at_utc=2026-08-21T01:30:35Z
+trigger_sha=e5cf5cda5adf1e52f53fa99b618296309c39c713
 secret_preflight_ready=true
 missing_secrets=none
-install_outcome=skipped
-typecheck_outcome=skipped
-market_agent_outcome=skipped
+setup_node_outcome=success
+install_outcome=success
+typecheck_outcome=success
+market_agent_outcome=failure
