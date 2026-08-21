@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 const CONTACT_SHEET = '담당자';
 const ACCOUNT_SHEET = '계정_관계';
 const CONTACT_SCAN_LAST_ROW = 1200;
+const FIRST_AI_CONTACT_ID = 92;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -89,8 +90,9 @@ export async function backfillMissingContactAccountIds(
 
   for (const [index, row] of (contactResult.data.values ?? []).entries()) {
     const contactId = String(row[0] ?? '').trim();
+    const match = contactId.match(/^CON-(\d+)$/);
     const existingAccountId = String(row[1] ?? '').trim();
-    if (!/^CON-\d+$/.test(contactId) || existingAccountId) continue;
+    if (!match || Number(match[1]) < FIRST_AI_CONTACT_ID || existingAccountId) continue;
 
     const tier1 = String(row[5] ?? '').trim();
     const currentCompany = String(row[7] ?? '').trim();
