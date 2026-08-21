@@ -1,4 +1,4 @@
-name: Linked Seoul Buyer Agent Once
+name: Linked Seoul Approval Gate + Buyer Once
 
 on:
   push:
@@ -56,6 +56,15 @@ jobs:
         if: steps.preflight.outputs.ready == 'true'
         run: npm run typecheck
 
+      - name: Run Approval Gate
+        id: gate
+        if: steps.preflight.outputs.ready == 'true'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+        run: npm run gate
+
       - name: Run Buyer Agent
         id: buyer
         if: steps.preflight.outputs.ready == 'true'
@@ -78,11 +87,12 @@ jobs:
           SETUP_NODE_OUTCOME: ${{ steps.setup_node.outcome }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
           BUYER_OUTCOME: ${{ steps.buyer.outcome }}
         run: |
           mkdir -p run-status
           {
-            echo "Linked Seoul Buyer Agent verification"
+            echo "Linked Seoul Approval Gate + Buyer verification"
             echo "run_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "trigger_sha=$GITHUB_SHA"
             echo "secret_preflight_ready=${READY:-unknown}"
@@ -90,6 +100,7 @@ jobs:
             echo "setup_node_outcome=${SETUP_NODE_OUTCOME:-not_run}"
             echo "install_outcome=${INSTALL_OUTCOME:-not_run}"
             echo "typecheck_outcome=${TYPECHECK_OUTCOME:-not_run}"
+            echo "approval_gate_outcome=${GATE_OUTCOME:-not_run}"
             echo "buyer_agent_outcome=${BUYER_OUTCOME:-not_run}"
           } > run-status/buyer-latest.txt
 
@@ -103,6 +114,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No status change to commit."
           else
-            git commit -m "Record Buyer Agent verification status"
+            git commit -m "Record approval gate and Buyer verification status"
             git push
           fi
