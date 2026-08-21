@@ -1,4 +1,4 @@
-name: Linked Seoul Market Agent Weekly
+name: Linked Seoul Market + Buyer Agents Weekly
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  market-agent:
+  sales-agents:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -36,7 +36,7 @@ jobs:
           done
           if [ "$missing" -eq 1 ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Agent run skipped safely because required secrets are not configured."
+            echo "Sales-agent run skipped safely because required secrets are not configured."
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
@@ -67,3 +67,15 @@ jobs:
           TARGET_APPLICATIONS: HVAC,Thermal Management,Door,Closure,Seat,Mirror,Power Tailgate,Charging Access
           MAX_CANDIDATES: '10'
         run: npm run market
+
+      - name: Run Buyer Agent
+        if: steps.preflight.outputs.ready == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          MAX_BUYER_ACCOUNTS: '6'
+          MAX_NEW_CONTACTS: '12'
+        run: npm run buyer
