@@ -1,0 +1,108 @@
+name: Linked Seoul Buyer Agent Once
+
+on:
+  push:
+    paths:
+      - 'buyer-run/**'
+
+permissions:
+  contents: write
+
+jobs:
+  buyer-agent-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Secret preflight
+        id: preflight
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+        shell: bash
+        run: |
+          missing=()
+          for name in OPENAI_API_KEY GOOGLE_SERVICE_ACCOUNT_EMAIL GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY GOOGLE_SHEETS_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$(IFS=,; echo "${missing[*]}")" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        id: setup_node
+        if: steps.preflight.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        id: install
+        if: steps.preflight.outputs.ready == 'true'
+        run: npm install
+
+      - name: Typecheck
+        id: typecheck
+        if: steps.preflight.outputs.ready == 'true'
+        run: npm run typecheck
+
+      - name: Run Buyer Agent
+        id: buyer
+        if: steps.preflight.outputs.ready == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          MAX_BUYER_ACCOUNTS: '6'
+          MAX_NEW_CONTACTS: '12'
+        run: npm run buyer
+
+      - name: Write Buyer verification status
+        if: always()
+        shell: bash
+        env:
+          READY: ${{ steps.preflight.outputs.ready }}
+          MISSING: ${{ steps.preflight.outputs.missing }}
+          SETUP_NODE_OUTCOME: ${{ steps.setup_node.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          BUYER_OUTCOME: ${{ steps.buyer.outcome }}
+        run: |
+          mkdir -p run-status
+          {
+            echo "Linked Seoul Buyer Agent verification"
+            echo "run_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "trigger_sha=$GITHUB_SHA"
+            echo "secret_preflight_ready=${READY:-unknown}"
+            echo "missing_secrets=${MISSING:-none}"
+            echo "setup_node_outcome=${SETUP_NODE_OUTCOME:-not_run}"
+            echo "install_outcome=${INSTALL_OUTCOME:-not_run}"
+            echo "typecheck_outcome=${TYPECHECK_OUTCOME:-not_run}"
+            echo "buyer_agent_outcome=${BUYER_OUTCOME:-not_run}"
+          } > run-status/buyer-latest.txt
+
+      - name: Commit Buyer verification status
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add run-status/buyer-latest.txt
+          if git diff --cached --quiet; then
+            echo "No status change to commit."
+          else
+            git commit -m "Record Buyer Agent verification status"
+            git push
+          fi
